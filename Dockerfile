@@ -4,4 +4,4 @@ WORKDIR /srv
 ADD ./requirements.txt /srv/requirements.txt
 RUN pip3 install -r requirements.txt
 ADD . /srv
-ENTRYPOINT python3 /srv/automation_testbed.py
+ENTRYPOINT python3 /srv/main.py

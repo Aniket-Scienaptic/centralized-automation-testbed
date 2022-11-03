@@ -4,12 +4,15 @@ import boto3
 s3_input_bucket = 'testbed-input-data'
 s3_output_bucket = 'testbed-output-stream'
 
+
 def lambda_handler(event, context):
     event['input_file'] = event['inputFile']
+    event['testbed-input-data'] = s3_input_bucket
     event['s3_output_bucket'] = s3_output_bucket
     s3_client = boto3.client('s3')
-    s3_client.put_object(Body=json.dumps(event), Bucket=s3_input_bucket, Key="input.json")
-    print("Input file created.")
+    s3_client.put_object(Body=json.dumps(event), Bucket=s3_input_bucket, Key="config.json")
+    print("Configuration file created")
+
     client = boto3.client('ecs')
     reponse = client.run_task(
         cluster='testbed-lambda-processor-cluster',
@@ -27,7 +30,7 @@ def lambda_handler(event, context):
             }
         }
     )
-    print("Input request sent to ECS.")
+    print("Input request sent to ECS")
     return {
         'statusCode': 200,
         'body': 'Lambda invoked'

@@ -1,1 +1,0 @@
-# centralized-automation-testbed
