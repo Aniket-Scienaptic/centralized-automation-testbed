@@ -1,13 +1,17 @@
 import json
+import traceback
 import boto3
 import requests
 import pandas as pd
 import numpy as np
+import multiprocessing
+import ndjson
 from pandas import json_normalize
 from io import StringIO
 from flatten_json import flatten
-from flatten_json import unflatten
-
+from flatten_json import unflatten_list
+from concurrent.futures import ThreadPoolExecutor
+from jsonpath_ng import jsonpath, parse
 
 def get_file_content(s3_input_bucket, object_key, s3_client):
     print("Reading data from s3...")
@@ -46,20 +50,14 @@ def get_response_from_iris(clientName, evaluatorEndpoint, headers, line):
     try:
         if clientName == 'MeridianLink':
             payload = line
-            try:
-                print(payload['values']['input']['Application']['CLF']['VEHICLE_LOAN']['SYSTEM']['@loan_number'],
-                      end=' ')
-            except:
-                print(payload['values']['input']['Application']['CLF']['VEHICLE_LOAN']['SYSTEM'][0]['@loan_number'],
-                      end=' ')
         else:
             payload = line['sources']
             # payload = line['sources']['values']['input']
         payload = json.dumps(payload)
         response = requests.request("POST", evaluatorEndpoint, headers=headers, data=payload)
         respv = json.loads(response.text)
-    except Exception as e:
-        print("Error while generating iris response,", str(e))
+    except:
+        print(traceback.format_exc())
     return respv
 
 
@@ -101,7 +99,7 @@ def generate_csv_response(s3_output_bucket, s3_client, dir_name, clientName, met
 
 def generate_json_response(s3_client, S3_OUTPUT_BUCKET, key, response, flowId):
     response.append(flowId)
-    s3_client.put_object(Body=json.dumps(response), Bucket=S3_OUTPUT_BUCKET, Key=key)
+    s3_client.put_object(Body=ndjson.dumps(response), Bucket=S3_OUTPUT_BUCKET, Key=key)
 
 
 def custom_attribute(responses, customFields):

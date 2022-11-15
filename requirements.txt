@@ -3,3 +3,5 @@ requests==2.27.0
 pandas==1.4.4
 numpy==1.23.2
 flatten-json==0.1.13
+jsonpath-ng==1.5.3
+ndjson==0.3.1

@@ -1,13 +1,13 @@
 import json
+import traceback
 import boto3
 import requests
 import time
 import pandas as pd
 import numpy as np
-import traceback
-import multiprocessing
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 from pandas import json_normalize
-from io import StringIO
 from centralize_automation_testbed import pre_process, get_response_from_iris, generate_json_response, custom_attribute, \
     generate_csv_response, get_file_content
 
@@ -21,7 +21,7 @@ def automation_testbed():
     try:
         input_event = s3_client.get_object(Bucket=s3_input_bucket, Key=input_key)['Body'].read().decode('utf-8')
     except Exception as e:
-        print("Failed to read configuration,", str(e))
+        print("Failed to read input configuration,", str(e))
         return
     event = json.loads(input_event)
     print("Input reading finished")
@@ -32,12 +32,13 @@ def automation_testbed():
     evaluatorEndpoint = event['evaluatorEndpoint']
     lowerLimit = event['recordRange']['lowerLimit'] - 1
     upperLimit = event['recordRange']['upperLimit'] - 1
-    applicationIds = event['applicationIds']  # list
-    customFields = event['customFields']  # list
-    metric = event['metric']  # bool True/False
+    applicationIds = event['applicationIds']
+    customFields = event['customFields']
+    metric = event['metric']
     completeResponse = event['completeResponse']
     authToken = event['authToken']
     clientName = event['clientName']
+    max_worker_thread = event['max_worker_thread']
     flowId = {'FlowId': evaluatorEndpoint.strip().split("/")[-1]}
     # input directory name
     if los and bureau:
@@ -47,7 +48,7 @@ def automation_testbed():
     elif bureau:
         dir_name = bureau
     else:
-        return "Please enter los and/or bureau"
+        return "Please enter correct los and/or bureau"
 
     if not authToken.startswith('Bearer'):
         authToken = 'Bearer ' + authToken
@@ -87,14 +88,24 @@ def automation_testbed():
     try:
         t3 = time.time()
         customResponse = []
-        for line in data:
-            res1 = get_response_from_iris(clientName, evaluatorEndpoint, headers, line)
-            customResponse.append(res1)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_worker_thread) as executor:
+            print("Number of threads in a thread pool executor", executor._max_workers)
+            pool = {executor.submit(get_response_from_iris, clientName, evaluatorEndpoint, headers, line): line for line
+                    in data}
+            for future in concurrent.futures.as_completed(pool):
+                task = pool[future]
+                try:
+                    t_data = future.result()
+                    customResponse.append(t_data)
+                except Exception as e:
+                    print('%r generated an exception: %s' % (task, e))
+                    return
         print("Time taken to get custom response from iris", ((time.time() - t3) / 60), "minute")
-        key1 = 'output/' + dir_name + '/custom_response.json'
-        generate_json_response(s3_client, s3_output_bucket, key1, customResponse, flowId)
+        key = 'output/' + dir_name + '/custom_response.json'
+        generate_json_response(s3_client, s3_output_bucket, key, customResponse, flowId)
     except Exception as e:
         print("Failed to generate custom response,", str(e))
+        print(traceback.format_exc())
         return
 
     # iris complete response
@@ -105,14 +116,24 @@ def automation_testbed():
         try:
             t4 = time.time()
             completeResp = []
-            for line in data:
-                res2 = get_response_from_iris(clientName, evaluatorEndpoint, headers, line)
-                completeResp.append(res2)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                pool = {executor.submit(get_response_from_iris, clientName, evaluatorEndpoint, headers, line): line for
+                        line in data}
+                for future in concurrent.futures.as_completed(pool):
+                    task = pool[future]
+                    try:
+                        t_data_2 = future.result()
+                        completeResp.append(t_data_2)
+                    except Exception as e:
+                        print('%r generated an exception: %s' % (task, e))
+                        return
             print("Time taken to get complete response from iris", ((time.time() - t4) / 60), "minute")
-            key2 = 'output/' + dir_name + '/complete_response.json'
-            generate_json_response(s3_client, s3_output_bucket, key2, completeResp, flowId)
+            key = 'output/' + dir_name + '/complete_response.json'
+            generate_json_response(s3_client, s3_output_bucket, key, completeResp, flowId)
         except Exception as e:
             print("Failed to generate complete response,", str(e))
+            print(traceback.format_exc())
             return
 
     # iris customField response
@@ -125,8 +146,6 @@ def automation_testbed():
             key3 = 'output/' + dir_name + '/custom_field_response.json'
             generate_json_response(s3_client, s3_output_bucket, key3, customFieldResponse, flowId)
             df = json_normalize(customResponse)
-            # csv_buffer = StringIO()
-            # df.to_csv(csv_buffer)
             key4 = 'output/' + dir_name + '/custom_field_response_table.csv'
             s3_client.put_object(Body=df.to_csv(), Bucket=s3_output_bucket, Key=key4)
         except Exception as e:
@@ -140,7 +159,7 @@ def automation_testbed():
     except Exception as e:
         print("Failed to generate csv response,", str(e))
         return
-
+    
     print("Elapsed time", ((time.time() - total_time) / 60), "minute")
 
     return {
